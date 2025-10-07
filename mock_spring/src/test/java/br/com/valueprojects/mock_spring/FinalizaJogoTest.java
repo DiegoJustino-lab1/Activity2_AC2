@@ -8,6 +8,11 @@ import java.util.Calendar;
 import java.util.List;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InOrder;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
 
 import br.com.valueprojects.mock_spring.builder.CriadorDeJogo;
 import br.com.valueprojects.mock_spring.model.FinalizaJogo;
@@ -16,85 +21,100 @@ import br.com.valueprojects.mock_spring.model.Participante;
 import infra.JogoDao;
 import infra.SmsService;
 
+@ExtendWith(MockitoExtension.class)
 public class FinalizaJogoTest {
 
-	@Test
-	public void deveFinalizarJogosDaSemanaAnterior() {
+    @Mock
+    private JogoDao daoMock;
 
-		Calendar antiga = Calendar.getInstance();
-		antiga.set(1999, 1, 20);
+    @Mock
+    private SmsService smsMock;
 
-		Jogo jogo1 = new CriadorDeJogo().para("Ca�a moedas")
-				.naData(antiga).constroi();
-		Jogo jogo2 = new CriadorDeJogo().para("Derruba barreiras")
-				.naData(antiga).constroi();
+    @InjectMocks
+    private FinalizaJogo finalizador;
 
-		List<Jogo> jogosAnteriores = Arrays.asList(jogo1, jogo2);
+    @Test
+    public void deveFinalizarJogosDaSemanaAnterior() {
+        Calendar antiga = Calendar.getInstance();
+        antiga.set(1999, 1, 20);
 
-		JogoDao daoFalso = mock(JogoDao.class);
+        Jogo jogo1 = new CriadorDeJogo().para("Caça moedas").naData(antiga).constroi();
+        Jogo jogo2 = new CriadorDeJogo().para("Derruba barreiras").naData(antiga).constroi();
+        List<Jogo> jogosAnteriores = Arrays.asList(jogo1, jogo2);
 
-		when(daoFalso.emAndamento()).thenReturn(jogosAnteriores);
+        when(daoMock.emAndamento()).thenReturn(jogosAnteriores);
 
-		FinalizaJogo finalizador = new FinalizaJogo(daoFalso);
-		finalizador.finaliza();
+        finalizador.finaliza();
 
-		assertTrue(jogo1.isFinalizado());
-		assertTrue(jogo2.isFinalizado());
-		assertEquals(2, finalizador.getTotalFinalizados());
-	}
+        assertTrue(jogo1.isFinalizado());
+        assertTrue(jogo2.isFinalizado());
+        assertEquals(2, finalizador.getTotalFinalizados());
+    }
 
-	@Test
-	public void deveVerificarSeMetodoAtualizaFoiInvocado() {
+    @Test
+    public void deveVerificarSeMetodoAtualizaFoiInvocado() {
+        Calendar antiga = Calendar.getInstance();
+        antiga.set(1999, 1, 20);
 
-		Calendar antiga = Calendar.getInstance();
-		antiga.set(1999, 1, 20);
+        Jogo jogo1 = new CriadorDeJogo().para("Cata moedas").naData(antiga).constroi();
+        List<Jogo> jogosAnteriores = Arrays.asList(jogo1);
 
-		Jogo jogo1 = new CriadorDeJogo().para("Cata moedas").naData(antiga).constroi();
-		Jogo jogo2 = new CriadorDeJogo().para("Derruba barreiras").naData(antiga).constroi();
+        when(daoMock.emAndamento()).thenReturn(jogosAnteriores);
 
-		List<Jogo> jogosAnteriores = Arrays.asList(jogo1, jogo2);
+        finalizador.finaliza();
 
-		JogoDao daoFalso = mock(JogoDao.class);
+        verify(daoMock, times(1)).atualiza(jogo1);
+    }
 
-		when(daoFalso.emAndamento()).thenReturn(jogosAnteriores);
+    @Test
+    public void deveSalvarAntesDeEnviarSms() {
+        Jogo jogo = new CriadorDeJogo().para("Corrida").constroi();
+        jogo.setVencedor(new Participante("Vencedor"));
 
-		FinalizaJogo finalizador = new FinalizaJogo(daoFalso);
-		finalizador.finaliza();
+        finalizador.finalizarEEnviarSms(jogo);
 
-		verify(daoFalso, times(1)).atualiza(jogo1);
-		// Mockito.verifyNoInteractions(daoFalso);
+        verify(daoMock).salvar(jogo);
+        verify(smsMock).enviar("Vencedor");
+    }
 
-	}
+    @Test
+    public void naoDeveEnviarSmsSeNaoSalvar() {
+        verifyNoInteractions(smsMock);
+    }
 
-	@Test
-	public void deveSalvarAntesDeEnviarSms() {
-		JogoDao daoMock = mock(JogoDao.class);
-		SmsService smsMock = mock(SmsService.class);
+    @Test
+    public void deveSalvarJogosFinalizadosEEnviarSmsApenasAposSalvar() {
+        Calendar antiga = Calendar.getInstance();
+        antiga.add(Calendar.DAY_OF_YEAR, -10);
+        Participante vencedor = new Participante("João Vencedor");
+        Jogo jogo1 = new CriadorDeJogo().para("Corrida Maluca").naData(antiga).resultado(vencedor, 500).constroi();
 
-		Jogo jogo = new CriadorDeJogo().para("Corrida").constroi();
-		jogo.setVencedor(new Participante("Vencedor"));
+        when(daoMock.emAndamento()).thenReturn(Arrays.asList(jogo1));
 
-		FinalizaJogo finalizaJogo = new FinalizaJogo(daoMock, smsMock);
+        finalizador.finalizaEEnviaSms();
 
-		finalizaJogo.finalizarEEnviarSms(jogo);
+        InOrder inOrder = inOrder(daoMock, smsMock);
+        inOrder.verify(daoMock, times(1)).atualiza(jogo1);
+        inOrder.verify(smsMock, times(1)).enviar("João Vencedor");
+        assertTrue(jogo1.isFinalizado());
+    }
 
-		// Verifica que salvou antes de enviar SMS
-		verify(daoMock).salvar(jogo);
-		verify(smsMock).enviar("Vencedor");
-	}
+    @Test
+    public void naoDeveEnviarSmsSeOcorrerErroAoSalvar() {
+        Calendar antiga = Calendar.getInstance();
+        antiga.add(Calendar.DAY_OF_YEAR, -10);
+        Participante participante = new Participante("Pedro Azarado");
+        Jogo jogo1 = new CriadorDeJogo().para("Caça ao Tesouro").naData(antiga).resultado(participante, 300).constroi();
 
-	@Test
-	public void naoDeveEnviarSmsSeNaoSalvar() {
-		JogoDao daoMock = mock(JogoDao.class);
-		SmsService smsMock = mock(SmsService.class);
+        when(daoMock.emAndamento()).thenReturn(Arrays.asList(jogo1));
+        doThrow(new RuntimeException("Erro simulado de banco de dados")).when(daoMock).atualiza(any(Jogo.class));
 
-		Jogo jogo = new CriadorDeJogo().para("Corrida").constroi();
+        try {
+            finalizador.finalizaEEnviaSms();
+        } catch (Exception e) {
+            // Exceção esperada
+        }
 
-		FinalizaJogo finalizaJogo = new FinalizaJogo(daoMock, smsMock);
-
-		// Não chama finalizarEEnviarSms, logo não salva nem envia SMS
-		// Verifica que não houve interação com SMS
-		verifyNoInteractions(smsMock);
-	}
-
+        verifyNoInteractions(smsMock);
+    }
 }

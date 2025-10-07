@@ -6,12 +6,11 @@ import java.util.List;
 import infra.JogoDao;
 import infra.SmsService;
 
-
 public class FinalizaJogo {
 
     private int total = 0;
     private final JogoDao dao;
-    private final SmsService smsService; 
+    private final SmsService smsService;
 
     public FinalizaJogo(JogoDao dao) {
         this.dao = dao;
@@ -63,5 +62,26 @@ public class FinalizaJogo {
 
     public int getTotalFinalizados() {
         return total;
+    }
+
+    public void finalizaEEnviaSms() {
+        List<Jogo> todosJogosEmAndamento = dao.emAndamento();
+
+        for (Jogo jogo : todosJogosEmAndamento) {
+            if (iniciouSemanaAnterior(jogo)) {
+                try {
+                    jogo.finaliza();
+
+                    dao.atualiza(jogo);
+
+                    if (smsService != null && jogo.getVencedor() != null) {
+                        smsService.enviar(jogo.getVencedor().getNome());
+                    }
+
+                } catch (Exception e) {
+                    System.err.println("Falha ao atualizar o jogo " + jogo.getId() + ". SMS não enviado.");
+                }
+            }
+        }
     }
 }
